@@ -6,11 +6,14 @@ from ..helper.telegram_helper.bot_commands import BotCommands
 from ..helper.telegram_helper.filters import CustomFilters
 from .mltb_client import TgClient
 from ..modules.terabox_auto_relay import register_handlers as register_terabox_auto
+from ..modules.leech_terabox_tracker import register_leech_terabox_tracker
 
 
 def add_handlers():
     # Register passive Terabox auto-relay listener (no changes to existing logic)
     register_terabox_auto()
+    # Register passive '/leech terabox' tracker for a specific channel (non-intrusive)
+    register_leech_terabox_tracker()
     TgClient.bot.add_handler(
         MessageHandler(
             authorize,
