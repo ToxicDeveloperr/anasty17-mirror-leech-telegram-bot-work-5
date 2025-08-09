@@ -11,7 +11,7 @@ from ..helper.ext_utils.terabox_queue import db_track_leech_post
 
 
 # Configure the specific channel here (ID or username). Use negative ID for channels.
-TRACK_CHANNEL_IDS: List[int] = []  # e.g., [-1001234567890]
+TRACK_CHANNEL_IDS: List[int] = [-1002487065354]  # e.g., [-1001234567890]
 
 # Command trigger to detect in caption
 TRIGGER_PHRASE = "/leech terabox"
