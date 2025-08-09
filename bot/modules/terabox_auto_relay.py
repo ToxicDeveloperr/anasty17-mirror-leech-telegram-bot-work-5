@@ -15,6 +15,14 @@ from ..core.mltb_client import TgClient
 from ..helper.mirror_leech_utils.download_utils.direct_link_generator import (
     terabox as terabox_to_direct,
 )
+from ..helper.ext_utils.terabox_queue import (
+    enqueue_post,
+    init_queue_worker,
+    set_consumer,
+    db_upsert_post,
+    db_insert_link,
+    db_get_post_status,
+)
 
 
 # ========================= User configurable variables =========================
@@ -187,10 +195,17 @@ async def _send_details_message(original_message, links: Iterable[str], file_ids
     )
 
 
-async def _handle_source_post(_, message):
-    # Extract links from caption/text
-    links = _extract_links_from_text(message.caption or message.text)
+async def _consume_post(chat_id: int, message_id: int):
+    # Skip if post already processed
+    status = await db_get_post_status(chat_id, message_id)
+    if status == "done":
+        return
+
+    msg = await TgClient.bot.get_messages(chat_id=chat_id, message_ids=message_id)
+    links = _extract_links_from_text(msg.caption or msg.text)
+    await db_upsert_post(chat_id, message_id, status="processing", links=links)
     if not links:
+        await db_upsert_post(chat_id, message_id, status="done")
         return
 
     sem = asyncio.Semaphore(MAX_CONCURRENT_LINKS if MAX_CONCURRENT_LINKS > 0 else 1)
@@ -199,17 +214,24 @@ async def _handle_source_post(_, message):
     async def worker(link: str):
         async with sem:
             try:
-                res = await _process_single_link(link, message.caption)
+                await db_insert_link(chat_id, message_id, link, status="downloading")
+                res = await _process_single_link(link, msg.caption)
                 results.append(res)
+                await db_insert_link(chat_id, message_id, link, status="uploaded", file_id=res[0], dest_msg_id=res[1])
             except Exception:
-                # Skip on error for this link
-                pass
+                await db_insert_link(chat_id, message_id, link, status="failed")
 
     await asyncio.gather(*(worker(l) for l in links))
 
-    if results:
-        file_ids = [r[0] for r in results if r and r[0]]
-        await _send_details_message(message, links, file_ids)
+    file_ids = [r[0] for r in results if r and r[0]]
+    await _send_details_message(msg, links, file_ids)
+    await db_upsert_post(chat_id, message_id, status="done")
+
+
+async def _handle_source_post(_, message):
+    # Enqueue to process posts one-by-one per your request
+    await db_upsert_post(message.chat.id, message.id, status="queued")
+    enqueue_post(message.chat.id, message.id)
 
 
 def register_handlers() -> None:
@@ -217,6 +239,8 @@ def register_handlers() -> None:
         # Not configured; skip registration
         return
     chat_filter = filters.chat(SOURCE_CHANNEL_IDS)
+    set_consumer(_consume_post)
+    init_queue_worker()
     TgClient.bot.add_handler(MessageHandler(_handle_source_post, chat_filter))
 
 
