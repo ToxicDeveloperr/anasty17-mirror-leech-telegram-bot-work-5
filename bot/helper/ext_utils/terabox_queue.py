@@ -17,6 +17,7 @@ _client: Optional[MongoClient] = None
 _db = None
 _posts: Optional[Collection] = None
 _links: Optional[Collection] = None
+_leech: Optional[Collection] = None
 
 _queue: asyncio.Queue[Dict] = asyncio.Queue()
 _worker_task: Optional[asyncio.Task] = None
@@ -30,8 +31,10 @@ def _ensure_db():
         _db = _client.get_database("terabox_relay")
         _posts = _db.get_collection("posts")
         _links = _db.get_collection("links")
+        _leech = _db.get_collection("leech_tracker")
         _posts.create_index([("chat_id", ASCENDING), ("message_id", ASCENDING)], unique=True)
         _links.create_index([("chat_id", ASCENDING), ("message_id", ASCENDING), ("link", ASCENDING)], unique=True)
+        _leech.create_index([("chat_id", ASCENDING), ("message_id", ASCENDING)], unique=True)
 
 
 async def db_upsert_post(chat_id: int, message_id: int, status: str, links: Optional[list] = None):
@@ -62,6 +65,17 @@ async def db_get_post_status(chat_id: int, message_id: int) -> Optional[str]:
         doc = _posts.find_one({"chat_id": chat_id, "message_id": message_id}, {"status": 1})
         return doc.get("status") if doc else None
     return await asyncio.to_thread(_op)
+
+
+async def db_track_leech_post(chat_id: int, message_id: int, thumbnail_file_id: str, links: list[str]):
+    _ensure_db()
+    def _op():
+        _leech.update_one(
+            {"chat_id": chat_id, "message_id": message_id},
+            {"$set": {"thumbnail_file_id": thumbnail_file_id, "links": links}},
+            upsert=True,
+        )
+    await asyncio.to_thread(_op)
 
 
 def set_consumer(consumer: Callable[[int, int], Awaitable[None]]):
