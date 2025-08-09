@@ -37,7 +37,7 @@ DESTINATION_CHANNEL_ID: int = -1002176533426
 DETAILS_CHANNEL_ID: int = -1002271035070
 
 # Max number of links to process from a single post (0 = no limit)
-MAX_LINKS_PER_POST: int = 0
+MAX_LINKS_PER_POST: int = 10
 
 # How many links to process concurrently per post
 MAX_CONCURRENT_LINKS: int = 2
