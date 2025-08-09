@@ -6,10 +6,11 @@ import re
 import tempfile
 from contextlib import asynccontextmanager
 from typing import Iterable, List, Tuple
+from logging import getLogger
 
 import httpx
 from pyrogram import filters
-from pyrogram.handlers import MessageHandler
+from pyrogram.handlers import MessageHandler, EditedMessageHandler
 
 from ..core.mltb_client import TgClient
 from ..helper.mirror_leech_utils.download_utils.direct_link_generator import (
@@ -67,6 +68,8 @@ TERABOX_REGEX = re.compile(
     r"https?://(?:www\.)?(?:" + "|".join(re.escape(d) for d in TERABOX_DOMAINS) + r")[^\s]+",
     re.IGNORECASE,
 )
+
+LOGGER = getLogger(__name__)
 
 
 def _limit_links(links: List[str]) -> List[str]:
@@ -196,15 +199,18 @@ async def _send_details_message(original_message, links: Iterable[str], file_ids
 
 
 async def _consume_post(chat_id: int, message_id: int):
+    LOGGER.info(f"[TeraboxRelay] Consuming post chat_id={chat_id} message_id={message_id}")
     # Skip if post already processed
     status = await db_get_post_status(chat_id, message_id)
     if status == "done":
+        LOGGER.info(f"[TeraboxRelay] Already processed chat_id={chat_id} message_id={message_id}")
         return
 
     msg = await TgClient.bot.get_messages(chat_id=chat_id, message_ids=message_id)
     links = _extract_links_from_text(msg.caption or msg.text)
     await db_upsert_post(chat_id, message_id, status="processing", links=links)
     if not links:
+        LOGGER.info(f"[TeraboxRelay] No Terabox links found chat_id={chat_id} message_id={message_id}")
         await db_upsert_post(chat_id, message_id, status="done")
         return
 
@@ -229,6 +235,9 @@ async def _consume_post(chat_id: int, message_id: int):
 
 
 async def _handle_source_post(_, message):
+    LOGGER.info(
+        f"[TeraboxRelay] Source post received chat_id={message.chat.id} message_id={message.id}"
+    )
     # Enqueue to process posts one-by-one per your request
     await db_upsert_post(message.chat.id, message.id, status="queued")
     enqueue_post(message.chat.id, message.id)
@@ -238,10 +247,23 @@ def register_handlers() -> None:
     if not SOURCE_CHANNEL_IDS or DESTINATION_CHANNEL_ID == 0 or DETAILS_CHANNEL_ID == 0:
         # Not configured; skip registration
         return
+    LOGGER.info(
+        f"[TeraboxRelay] Registering handlers for sources={SOURCE_CHANNEL_IDS}, dest={DESTINATION_CHANNEL_ID}, details={DETAILS_CHANNEL_ID}"
+    )
     chat_filter = filters.chat(SOURCE_CHANNEL_IDS)
     set_consumer(_consume_post)
     init_queue_worker()
+    # Register on bot client
     TgClient.bot.add_handler(MessageHandler(_handle_source_post, chat_filter))
+    TgClient.bot.add_handler(EditedMessageHandler(_handle_source_post, chat_filter))
+    # Also register on user client if available (in case bot can't read the source)
+    if TgClient.user is not None:
+        try:
+            TgClient.user.add_handler(MessageHandler(_handle_source_post, chat_filter))
+            TgClient.user.add_handler(EditedMessageHandler(_handle_source_post, chat_filter))
+            LOGGER.info("[TeraboxRelay] User client handler registered as fallback")
+        except Exception as e:
+            LOGGER.error(f"[TeraboxRelay] Failed to register user client handler: {e}")
 
 
 # -------- aiofiles minimal import (lazy) --------
