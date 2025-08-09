@@ -70,6 +70,7 @@ TERABOX_REGEX = re.compile(
 )
 
 LOGGER = getLogger(__name__)
+LOGGER.info("[TeraboxRelay] Module loaded")
 
 
 def _limit_links(links: List[str]) -> List[str]:
@@ -250,20 +251,15 @@ def register_handlers() -> None:
     LOGGER.info(
         f"[TeraboxRelay] Registering handlers for sources={SOURCE_CHANNEL_IDS}, dest={DESTINATION_CHANNEL_ID}, details={DETAILS_CHANNEL_ID}"
     )
-    chat_filter = filters.chat(SOURCE_CHANNEL_IDS)
+    # Only accept posts from the specified channel ids (bot is admin per your instruction)
+    chat_filter = filters.chat(SOURCE_CHANNEL_IDS) & filters.channel
     set_consumer(_consume_post)
     init_queue_worker()
     # Register on bot client
     TgClient.bot.add_handler(MessageHandler(_handle_source_post, chat_filter))
     TgClient.bot.add_handler(EditedMessageHandler(_handle_source_post, chat_filter))
-    # Also register on user client if available (in case bot can't read the source)
-    if TgClient.user is not None:
-        try:
-            TgClient.user.add_handler(MessageHandler(_handle_source_post, chat_filter))
-            TgClient.user.add_handler(EditedMessageHandler(_handle_source_post, chat_filter))
-            LOGGER.info("[TeraboxRelay] User client handler registered as fallback")
-        except Exception as e:
-            LOGGER.error(f"[TeraboxRelay] Failed to register user client handler: {e}")
+
+    # Do not register user client fallback per your instruction
 
 
 # -------- aiofiles minimal import (lazy) --------
